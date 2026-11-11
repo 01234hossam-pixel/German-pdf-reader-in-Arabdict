@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='4' y='12' width='56' height='13.4' fill='%23000'/><rect x='4' y='25.4' width='56' height='13.3' fill='%23d00'/><rect x='4' y='38.7' width='56' height='13.3' fill='%23ffce00'/></svg>">
+<title>قارئ PDF + arabdict</title>
+<style>
+:root{--bg:#f4f3ef;--fg:#1c1c1a;--bar:#ffffff;--line:#d8d6cf;--acc:#1f6feb;--accfg:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1b1a;--fg:#ecebe6;--bar:#262624;--line:#3a3a37;--acc:#4c8dff;--accfg:#0b0b0b}}
+:root[data-theme="dark"]{--bg:#1b1b1a;--fg:#ecebe6;--bar:#262624;--line:#3a3a37;--acc:#4c8dff;--accfg:#0b0b0b}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+body{position:relative}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--bar);z-index:10}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--bar);border-bottom:1px solid var(--line)}
+button,.btn{font:inherit;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bar);color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}
+.pri{background:var(--acc);color:var(--accfg);border-color:var(--acc)}
+input[type=file]{display:none}
+#pages{padding:14px 8px 120px;display:flex;flex-direction:column;align-items:center;gap:12px;overflow-x:auto}
+.page{position:relative;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);flex:none}
+.page canvas{display:block}
+.textLayer{position:absolute;inset:0;overflow:hidden;line-height:1}
+.textLayer span{position:absolute;white-space:pre;color:transparent!important;-webkit-text-fill-color:transparent!important;transform-origin:0 0;cursor:pointer}
+.textLayer ::selection{background:rgba(31,111,235,.3)}
+#hint{padding:40px 16px;text-align:center;opacity:.75;line-height:1.9}
+#pop{position:absolute;z-index:20;width:min(320px,calc(100vw - 16px));background:var(--bar);color:var(--fg);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:12px 14px;display:none}
+#pop .row{display:flex;align-items:center;gap:8px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}#pop.drag .row{cursor:grabbing}#grip{opacity:.5;font-size:1.3rem;line-height:1;padding:0 2px}
+#pw{font-size:1.25rem;font-weight:700;direction:ltr;flex:1;overflow-wrap:anywhere}
+#pop .ic{padding:6px 10px;font-size:1.1rem;line-height:1}
+#pm{margin-top:10px;font-size:1.2rem;direction:rtl;text-align:right;white-space:pre-line;line-height:1.7}
+#pg{margin-top:6px;font-size:.9rem;opacity:.75;direction:ltr;text-align:left;white-space:pre-line}
+#pl{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+#pl a{font-size:.8rem;padding:4px 9px}
+.muted{opacity:.7}
+.hl{position:absolute;background:rgba(255,200,0,.38);pointer-events:none;border-radius:2px;z-index:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <label class="btn pri" for="f">اختار ملف PDF</label>
+  <input id="f" type="file" accept="application/pdf">
+  <button id="zo" aria-label="تصغير">−</button>
+  <button id="zi" aria-label="تكبير">+</button>
+  <span id="zl" class="muted"></span>
+  <label class="muted"><input id="auto" type="checkbox" checked> فتح arabdict تلقائياً</label>
+</div>
+<div id="hint">اختار ملف PDF، وبعدها دوس على أي كلمة ألماني.<br>هتظهرلك الترجمة العربي فوراً وجنبها أيقونة 🔊 للنطق.<br>ولو عاوز جملة، حددها بالماوس.</div>
+<div id="pages"></div>
+
+<div id="pop" role="dialog">
+  <div class="row">
+    <span id="grip" title="اسحب لتحريك المربع">⠿</span><span id="pw"></span>
+    <button id="say" class="ic" aria-label="نطق">🔊</button>
+    <button id="x" class="ic" aria-label="إغلاق">✕</button>
+  </div>
+  <div id="pm"></div>
+  <div id="pg"></div>
+  <div id="pl">
+    <a id="ad" class="btn" target="lookupwin">arabdict</a>
+    
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script>
+if(typeof pdfjsLib==="undefined"){document.addEventListener("DOMContentLoaded",function(){document.getElementById("hint").textContent="مكتبة قراءة الـ PDF متحمّلتش. اتأكد إن في إنترنت وافتح الملف تاني."})}
+pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+var pdf=null,scale=1.3,cur="",pagesEl=document.getElementById("pages"),pop=document.getElementById("pop");
+var $=function(i){return document.getElementById(i)};
+var cache={},sampleP=null,reqId=0;
+function setScaleLabel(){$("zl").textContent=Math.round(scale*100)+"%"}
+setScaleLabel();
+
+function getSample(){
+  if(!sampleP){sampleP=(window.claude&&claude.use?claude.use("sample"):Promise.resolve(null)).catch(function(){return null})}
+  return sampleP;
+}
+function speak(w){
+  try{
+    if(!w||!window.speechSynthesis)return;
+    speechSynthesis.cancel();
+    var u=new SpeechSynthesisUtterance(w);u.lang="de-DE";u.rate=.85;
+    var vs=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.toLowerCase().indexOf("de")===0});
+    if(vs.length)u.voice=vs[0];
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+function clean(s){return s.replace(/^[^\p{L}]+|[^\p{L}]+$/gu,"")}
+
+function place(x,y){
+  pop.style.display="block";
+  var w=pop.offsetWidth,h=pop.offsetHeight,vw=document.documentElement.clientWidth;
+  var left=Math.max(8,Math.min(x-w/2,vw-w-8)+window.scrollX);
+  var below=y+22,top=below;
+  if(y-window.scrollY+22+h>window.innerHeight-8)top=y-h-16;
+  pop.style.left=left+"px";pop.style.top=Math.max(window.scrollY+4,top)+"px";
+}
+function openDict(word){
+  try{
+    var w=Math.floor(screen.availWidth/2),l=(screen.availLeft||0)+w,tp=screen.availTop||0;
+    window.open("https://www.arabdict.com/ar/deutsch-arabisch/"+encodeURIComponent(word),"lookupwin","popup=yes,width="+w+",height="+screen.availHeight+",left="+l+",top="+tp);
+  }catch(e){}
+}
+async function lookup(word,ctx,x,y){
+  cur=word;var id=++reqId,q=encodeURIComponent(word);
+  if($("auto").checked)openDict(word);
+  $("pw").textContent=word;
+  $("ad").href="https://www.arabdict.com/ar/deutsch-arabisch/"+q;
+  
+  $("pg").textContent="";
+  var key=word.toLowerCase();
+  if(cache[key]){show(cache[key])}else{$("pm").textContent="...";$("pm").className="muted"}
+  place(x,y);
+  if(cache[key])return;
+  var s=await getSample();
+  if(id!==reqId)return;
+  if(!s){$("pm").className="";$("pm").textContent="الترجمة بتظهر في نافذة arabdict.";return}
+  try{
+    var r=await s("Translate the German word or phrase \""+word+"\" into Arabic. It appears in this line of a book: \""+ctx.slice(0,240)+"\". Reply in exactly two lines, plain text, no markdown, nothing else.\nLine 1: the Arabic meaning that fits the context (up to 3 short alternatives separated by ، ).\nLine 2: grammar in English: for a noun give article and plural (e.g. das Haus, Pl. Häuser); for a verb give infinitive and Perfekt (e.g. gehen, ist gegangen); otherwise just the word type. For a longer phrase, line 2 may be empty.",{modelTier:"quick"});
+    var t=(r.text||"").trim().split("\n").filter(function(l){return l.trim()});
+    var res={m:(t[0]||"").replace(/^Line 1:\s*/i,""),g:(t.slice(1).join("\n")||"").replace(/^Line 2:\s*/i,"")};
+    cache[key]=res;
+    if(id===reqId)show(res);
+  }catch(e){
+    if(id!==reqId)return;
+    $("pm").className="";
+    $("pm").textContent=(e&&e.code==="not_granted")?"محتاج توافق على طلب الترجمة عشان تظهر. تقدر تستخدم الزراير تحت.":"مقدرتش أجيب الترجمة دلوقتي. جرّب تاني.";
+  }
+}
+function show(r){$("pm").className="";$("pm").textContent=r.m;$("pg").textContent=r.g}
+
+function visualWord(sp,cx,cy){
+  var pg=sp.closest(".page"),cv=pg&&pg.querySelector("canvas");if(!cv)return null;
+  var cr=cv.getBoundingClientRect(),k=cv.width/cr.width,sr=sp.getBoundingClientRect();
+  var x0=Math.max(0,Math.floor((sr.left-cr.left)*k)),x1=Math.min(cv.width,Math.ceil((sr.right-cr.left)*k));
+  var y0=Math.max(0,Math.floor((sr.top-cr.top+sr.height*.2)*k)),y1=Math.min(cv.height,Math.ceil((sr.bottom-cr.top-sr.height*.1)*k));
+  var w=x1-x0,h=y1-y0;if(w<2||h<2)return null;
+  var d=cv.getContext("2d").getImageData(x0,y0,w,h).data,ink=new Uint8Array(w);
+  for(var yy=0;yy<h;yy+=2)for(var xx=0;xx<w;xx++){var i=(yy*w+xx)*4;if(d[i+3]>0&&(d[i]+d[i+1]+d[i+2])/3<170)ink[xx]=1}
+  var gap=sr.height*.22*k,ws=[],st=-1,last=-1;
+  for(var c=0;c<w;c++){if(ink[c]){if(st<0)st=c;else if(c-last>gap){ws.push([st,last]);st=c}last=c}}
+  if(st>=0)ws.push([st,last]);
+  if(!ws.length)return null;
+  var loc=(cx-cr.left)*k-x0,best=0,bd=1e9;
+  ws.forEach(function(r,j){var dd=loc<r[0]?r[0]-loc:(loc>r[1]?loc-r[1]:0);if(dd<bd){bd=dd;best=j}});
+  var b=ws[best];
+  return {n:best,count:ws.length,hl:{pg:pg,l:cr.left+(x0+b[0])/k-1,r:cr.left+(x0+b[1]+1)/k+1,t:sr.top+sr.height*.08,b:sr.bottom}};
+}
+function wordAt(x,y){
+  var node,off;
+  if(document.caretPositionFromPoint){var p=document.caretPositionFromPoint(x,y);if(p){node=p.offsetNode;off=p.offset}}
+  else if(document.caretRangeFromPoint){var r=document.caretRangeFromPoint(x,y);if(r){node=r.startContainer;off=r.startOffset}}
+  if(!node||node.nodeType!==3||!node.parentNode.closest||!node.parentNode.closest(".textLayer"))return null;
+  try{
+    var el=document.elementFromPoint(x,y),sp,nd;
+    if(el&&el.tagName==="SPAN"&&el.closest(".textLayer")&&el.firstChild&&el.firstChild.nodeType===3){sp=el;nd=el.firstChild}else{sp=node.parentNode;nd=node}
+    var tx=sp.textContent,toks=[],m,rg=/\S+/g;
+    while((m=rg.exec(tx)))toks.push(m);
+    var vi=visualWord(sp,x,y);
+    if(vi&&toks.length&&vi.count===toks.length){
+      var tk=toks[vi.n],w0=clean(tk[0]);
+      if(w0){
+        var ln=Array.prototype.map.call(sp.parentNode.children,function(s){return s.textContent}).join(" ");
+        return {w:w0,node:nd,a:tk.index,b:tk.index+tk[0].length,hl:vi.hl,ctx:tx+" "+ln.slice(0,200)};
+      }
+    }
+  }catch(_){}
+  var t=node.textContent,re=/[\p{L}\p{M}'’\-]/u;
+  if(off>=t.length)off=t.length-1;
+  if(off>0&&!re.test(t[off])&&re.test(t[off-1]))off--;
+  if(!re.test(t[off]))return null;
+  var a=off,b=off;
+  while(a>0&&re.test(t[a-1]))a--;
+  while(b<t.length&&re.test(t[b]))b++;
+  var w=clean(t.slice(a,b).replace(/^[-'’]+|[-'’]+$/g,""));
+  if(!w)return null;
+  var line=node.parentNode.parentNode?Array.prototype.map.call(node.parentNode.parentNode.children,function(s){return s.textContent}).join(" "):t;
+  return {w:w,node:node,a:a,b:b,ctx:node.parentNode.textContent+" "+line.slice(0,200)};
+}
+var dragged=false,sx=0,sy=0;
+pagesEl.addEventListener("pointerdown",function(e){dragged=false;sx=e.clientX;sy=e.clientY});
+pagesEl.addEventListener("pointermove",function(e){
+  if(e.pointerType==="mouse"&&e.buttons&&(Math.abs(e.clientX-sx)>6||Math.abs(e.clientY-sy)>6))dragged=true;
+});
+pagesEl.addEventListener("click",function(e){
+  setTimeout(function(){
+    if(dragged)return;
+    var h=wordAt(e.clientX,e.clientY);
+    if(!h){pop.style.display="none";return}
+    Array.prototype.forEach.call(pagesEl.querySelectorAll(".hl"),function(n){n.remove()});
+    var s=window.getSelection();
+    if(h.hl){
+      s.removeAllRanges();
+      var pr=h.hl.pg.getBoundingClientRect(),dv=document.createElement("div");dv.className="hl";
+      dv.style.left=(h.hl.l-pr.left)+"px";dv.style.top=(h.hl.t-pr.top)+"px";
+      dv.style.width=(h.hl.r-h.hl.l)+"px";dv.style.height=(h.hl.b-h.hl.t)+"px";
+      h.hl.pg.appendChild(dv);
+    }else{
+      try{
+        var r=document.createRange();r.setStart(h.node,h.a);r.setEnd(h.node,h.b);
+        s.removeAllRanges();s.addRange(r);
+      }catch(_){}
+    }
+    lookup(h.w,h.ctx,e.pageX,e.pageY);
+  },0);
+});
+var t=null;
+document.addEventListener("selectionchange",function(){
+  clearTimeout(t);
+  t=setTimeout(function(){
+    var s=window.getSelection();if(!s||s.isCollapsed||!s.rangeCount)return;
+    if(!dragged||!pagesEl.contains(s.anchorNode))return;
+    var w=s.toString().replace(/\s+/g," ").trim();w=clean(w);
+    if(!w||w.length>120||w===cur)return;
+    var rc=s.getRangeAt(0).getBoundingClientRect();
+    lookup(w,w,rc.left+rc.width/2+window.scrollX,rc.bottom+window.scrollY);
+  },500);
+});
+(function(){
+  var row=pop.querySelector(".row"),d=null;
+  row.addEventListener("pointerdown",function(e){
+    if(e.target.closest("button"))return;
+    d={x:e.pageX-pop.offsetLeft,y:e.pageY-pop.offsetTop};
+    try{row.setPointerCapture(e.pointerId)}catch(_){}
+    pop.classList.add("drag");e.preventDefault();
+  });
+  row.addEventListener("pointermove",function(e){
+    if(!d)return;
+    var maxL=document.documentElement.scrollWidth-pop.offsetWidth;
+    pop.style.left=Math.max(0,Math.min(e.pageX-d.x,maxL))+"px";
+    pop.style.top=Math.max(0,e.pageY-d.y)+"px";
+  });
+  function end(){d=null;pop.classList.remove("drag")}
+  row.addEventListener("pointerup",end);
+  row.addEventListener("pointercancel",end);
+})();
+$("say").onclick=function(){speak(cur)};
+$("x").onclick=function(){pop.style.display="none"};
+document.addEventListener("keydown",function(e){if(e.key==="Escape")pop.style.display="none"});
+
+async function renderPage0(holder,n){
+  if(holder.dataset.done)return;holder.dataset.done="1";
+  var page=await pdf.getPage(n),vp=page.getViewport({scale:scale}),dpr=window.devicePixelRatio||1;
+  holder.style.width=vp.width+"px";holder.style.height=vp.height+"px";
+  var c=document.createElement("canvas");c.width=vp.width*dpr;c.height=vp.height*dpr;
+  c.style.width=vp.width+"px";c.style.height=vp.height+"px";
+  holder.appendChild(c);
+  await page.render({canvasContext:c.getContext("2d"),viewport:vp,transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+  var tl=document.createElement("div");tl.className="textLayer";
+  tl.style.setProperty("--scale-factor",vp.scale);
+  holder.appendChild(tl);
+  var tc=await page.getTextContent();
+  pdfjsLib.renderTextLayer({textContentSource:tc,container:tl,viewport:vp,textDivs:[]});
+}
+async function renderPage(holder,n){
+  try{await renderPage0(holder,n)}
+  catch(e){holder.style.background="#fff";holder.style.color="#b00";holder.style.padding="12px";holder.textContent="مقدرتش أرسم صفحة "+n+": "+(e&&e.message?e.message:e)}
+}
+async function build(){
+  if(!pdf)return;
+  pop.style.display="none";pagesEl.innerHTML="";
+  var p1=await pdf.getPage(1),v=p1.getViewport({scale:scale});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){if(e.isIntersecting){renderPage(e.target,+e.target.dataset.n)}});
+  },{rootMargin:"600px"});
+  for(var i=1;i<=pdf.numPages;i++){
+    var d=document.createElement("div");d.className="page";d.dataset.n=i;
+    d.style.width=v.width+"px";d.style.height=v.height+"px";
+    pagesEl.appendChild(d);io.observe(d);
+  }
+}
+$("f").onchange=async function(e){
+  var file=e.target.files[0];if(!file)return;
+  var buf=await file.arrayBuffer();
+  try{
+    pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    $("hint").style.display="none";
+    build();
+  }catch(err){$("hint").textContent="مقدرتش أفتح الملف ده."}
+};
+$("zi").onclick=function(){scale=Math.min(3,scale+.2);setScaleLabel();build()};
+$("zo").onclick=function(){scale=Math.max(.6,scale-.2);setScaleLabel();build()};
+</script>
+</body>
+</html>
